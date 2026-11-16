@@ -111,3 +111,27 @@ def test_other_events_get_a_message_panel():
 def test_missing_team_is_handled():
     p = client.post("/hook", json={"event": "check.completed", "check": {}}).json()
     assert p["title"] == "Caption Suggester"
+
+
+# ---------- hashtags / emojis minimum ----------
+def test_captions_always_have_hashtags_and_emojis():
+    import config
+    import generator
+    # A team like the synthetic demo team: short captions, no hashtags, no emojis.
+    plain = [etl.clean_post({"id": i, "caption": f"Robo Wars {i} by Demo Studio", "likes": 100 + i,
+                             "label": "team"}) for i in range(10)]
+    tone = TeamTone(plain)
+    inp = etl.build_input({**SAMPLE, "team": {"id": 5, "name": "Demo Studio (synthetic)"}}, plain)
+    for cap in generator.template_captions(inp, tone, 4):
+        c = etl.clean_caption(cap)
+        assert len(c["hashtags"]) >= config.MIN_HASHTAGS, cap
+        assert len(c["emojis"]) >= config.MIN_EMOJIS, cap
+        assert "demostudio" in c["hashtags"]
+    # A Gemini caption that ignored the instruction gets topped up.
+    fixed = generator.ensure_tags_and_emojis("Robots are back this week.",
+                                             generator.hashtags_for(inp, tone),
+                                             generator.emojis_for(inp, tone))
+    c = etl.clean_caption(fixed)
+    assert len(c["hashtags"]) >= config.MIN_HASHTAGS and len(c["emojis"]) >= config.MIN_EMOJIS
+    # Required tags/emojis don't hurt the tone score for a team that never uses them.
+    assert tone.tone_match(fixed) > tone.tone_match("Robots are back this week.") - 5

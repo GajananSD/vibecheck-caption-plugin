@@ -9,6 +9,7 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 import config
+import etl
 
 log = logging.getLogger("caption.generator")
 _pool = ThreadPoolExecutor(max_workers=4)
@@ -38,12 +39,56 @@ def _cache_key(inp: dict, tone, n: int) -> tuple:
     return (inp.get("team_id"), inp["description"].lower(), tuple(inp["mood"]), tone.n, n)
 
 
+# --------------------------------------------------------------------------
+# Hashtags and emojis: the team's own first, topped up to the configured minimum.
+# --------------------------------------------------------------------------
+MOOD_EMOJIS = {
+    "bold": "🔥", "playful": "🎉", "vibrant": "✨", "warm and energetic": "⚡",
+    "dark and dramatic": "🌙", "bright and upbeat": "☀️", "clean and minimal": "🤍",
+    "informative": "📌", "lively": "🎶", "cool and composed": "💙",
+}
+DEFAULT_EMOJIS = ["🚀", "✨"]
+
+
+def hashtags_for(inp: dict, tone) -> list[str]:
+    """Team's own hashtags, then #TeamName and topic keywords, up to the needed count."""
+    tags = list(tone.top_hashtags)
+    team_tag = "".join(w.capitalize() for w in
+                       re.findall(r"[A-Za-z0-9]+", inp["team_name"].split("(")[0]))
+    for t in [team_tag] + [k.replace("-", "").capitalize() for k in inp["topic"][:3]]:
+        if t and t.lower() not in {x.lower() for x in tags}:
+            tags.append(t)
+    return tags[:max(config.MIN_HASHTAGS, round(tone.hashtag_rate))]
+
+
+def emojis_for(inp: dict, tone) -> list[str]:
+    """Team's own emojis, then ones that fit the poster's mood."""
+    em = list(tone.top_emojis) + [MOOD_EMOJIS[m] for m in inp["mood"] if m in MOOD_EMOJIS]
+    em = list(dict.fromkeys(em + DEFAULT_EMOJIS))
+    return em[:max(config.MIN_EMOJIS, round(tone.emoji_rate), 1)]
+
+
+def ensure_tags_and_emojis(caption: str, tags: list[str], emojis: list[str]) -> str:
+    """Guarantee the minimums even if Gemini ignored the instruction."""
+    found_tags = {h.lower() for h in etl.HASHTAG_RE.findall(caption)}
+    n_emojis = len(etl.EMOJI_RE.findall(caption))
+    body, sep, tail = caption.rstrip().partition("\n\n#")
+    tail = ("#" + tail) if sep else ""
+    if n_emojis < config.MIN_EMOJIS:
+        body = body.rstrip() + " " + " ".join(emojis[:config.MIN_EMOJIS - n_emojis])
+    missing = [t for t in tags if t.lower() not in found_tags][:max(0, config.MIN_HASHTAGS - len(found_tags))]
+    if missing:
+        tail = (tail + " " if tail else "") + " ".join("#" + t for t in missing)
+    return body + ("\n\n" + tail if tail else "")
+
+
 def build_prompt(inp: dict, tone, n: int) -> str:
     examples = "\n".join(f"{i + 1}. {e}" for i, e in enumerate(inp["examples"])) or "(none yet)"
-    emoji_habit = ("often uses emojis, e.g. " + " ".join(tone.top_emojis[:3])
-                   if tone.emoji_rate >= 1 else
-                   "uses an emoji now and then" if tone.emoji_rate > 0.2 else "rarely uses emojis")
-    tags = ", ".join("#" + h for h in tone.top_hashtags) or "(none)"
+    habit = ("often uses emojis" if tone.emoji_rate >= 1 else
+             "uses an emoji now and then" if tone.emoji_rate > 0.2 else "rarely uses emojis")
+    emoji_habit = (f"{habit}; every caption must still have at least {config.MIN_EMOJIS} emoji, "
+                   f"e.g. " + " ".join(emojis_for(inp, tone)[:3]))
+    tags = ", ".join("#" + h for h in hashtags_for(inp, tone))
     return f"""You write Instagram captions for the design team "{inp['team_name']}" (@{inp['handle']}).
 
 The designer is planning this poster: "{inp['description'] or 'no description given'}"
@@ -53,7 +98,7 @@ Visual mood of the poster: {', '.join(inp['mood'])}
 The team's caption voice:
 - about {round(tone.avg_words)} words per caption
 - {emoji_habit}
-- hashtags they use: {tags}
+- hashtags to use: {tags}
 - words they use a lot: {', '.join(tone.top_words[:10]) or 'n/a'}
 
 Their best-liked past captions (copy the VOICE only: rhythm, punctuation, emoji and hashtag habits;
@@ -61,8 +106,8 @@ they are about other events, so do not reuse their topics or phrases):
 {examples}
 
 Write {n} different captions for this poster in the same voice. Vary the opening line and the length.
-Write about the poster's subject, not its colours or layout. Only use the team's own hashtags,
-spelled exactly as above.
+Write about the poster's subject, not its colours or layout. End every caption with at least
+{config.MIN_HASHTAGS} of the hashtags above, spelled exactly as above, and no other hashtags.
 Do not invent dates, prices or names; use a placeholder like [date] if one is needed.
 Return a JSON array of {n} strings and nothing else."""
 
@@ -149,8 +194,8 @@ def template_captions(inp: dict, tone, n: int) -> list[str]:
     topic_words = inp["topic"][:3] or ["something new"]
     topic = " ".join(topic_words)
     hooks = [h for m in inp["mood"] for h in HOOKS.get(m, [])] + DEFAULT_HOOKS
-    tags = " ".join("#" + h for h in tone.top_hashtags[:max(1, round(tone.hashtag_rate))])
-    emoji = tone.top_emojis[0] if tone.emoji_rate >= 0.5 and tone.top_emojis else ""
+    tags = " ".join("#" + h for h in hashtags_for(inp, tone))
+    emoji = " ".join(emojis_for(inp, tone)[:max(config.MIN_EMOJIS, round(tone.emoji_rate))])
     long_voice = tone.avg_words > 25
 
     out, used = [], set()
@@ -176,5 +221,6 @@ def template_captions(inp: dict, tone, n: int) -> list[str]:
 def generate(inp: dict, tone, n: int = config.N_CAPTIONS) -> tuple[list[str], str]:
     caps = gemini_captions(inp, tone, n)
     if caps:
-        return caps, "gemini"
+        tags, emojis = hashtags_for(inp, tone), emojis_for(inp, tone)
+        return [ensure_tags_and_emojis(c, tags, emojis) for c in caps], "gemini"
     return template_captions(inp, tone, n), "template"

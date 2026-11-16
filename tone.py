@@ -10,6 +10,7 @@ from collections import Counter
 
 import numpy as np
 
+import config
 import etl
 
 
@@ -78,11 +79,17 @@ class TeamTone:
     def style_match(self, c: dict) -> float:
         """0-1: length, emoji and hashtag habits compared with the team's."""
         length = math.exp(-((c["n_words"] - self.avg_words) / (2 * self.std_words)) ** 2)
-        emoji = math.exp(-abs(len(c["emojis"]) - self.emoji_rate) / 2)
-        tags = math.exp(-abs(len(c["hashtags"]) - self.hashtag_rate) / 3)
+        # Targets are the team's habit, but never below the configured minimum,
+        # so captions are not penalised for carrying the required hashtags/emojis.
+        emoji = math.exp(-abs(len(c["emojis"]) - max(self.emoji_rate, config.MIN_EMOJIS)) / 2)
+        tags = math.exp(-abs(len(c["hashtags"]) - max(self.hashtag_rate, config.MIN_HASHTAGS)) / 3)
         team_tags = {h.lower() for h in self.top_hashtags}
-        own_tags = (sum(h in team_tags for h in c["hashtags"]) / len(c["hashtags"])
-                    if c["hashtags"] else (1.0 if self.hashtag_rate < 0.5 else 0.5))
+        if self.hashtag_rate < 0.5:      # team has no hashtag habit: any added tags are fine
+            own_tags = 1.0
+        elif c["hashtags"]:
+            own_tags = sum(h in team_tags for h in c["hashtags"]) / len(c["hashtags"])
+        else:
+            own_tags = 0.5
         return 0.4 * length + 0.2 * emoji + 0.2 * tags + 0.2 * own_tags
 
     def tone_match(self, caption: str) -> float:

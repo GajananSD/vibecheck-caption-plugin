@@ -21,3 +21,7 @@ FETCH_POSTS = os.getenv("FETCH_POSTS", "1") == "1"
 VIBECHECK_API_BASE = os.getenv("VIBECHECK_API_BASE", "").strip()
 
 N_CAPTIONS = 4
+# Every caption gets at least this many hashtags / emojis, even if the team's
+# past captions use fewer (more are used when the team's habit is higher).
+MIN_HASHTAGS = int(os.getenv("MIN_HASHTAGS", "2"))
+MIN_EMOJIS = int(os.getenv("MIN_EMOJIS", "1"))
