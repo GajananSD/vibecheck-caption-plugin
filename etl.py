@@ -10,6 +10,9 @@ own same other each few both here there when where why how what which who whom
 s t don should now let lets get got via per amp rt
 """.split())
 
+# File/draft words (e.g. synthetic "brief-01 version" captions): not part of a team's voice.
+NOISE_WORDS = set("version versions draft drafts brief briefs synthetic final copy kit".split())
+
 # Words that describe the poster's *look*, not its subject. They are kept for
 # mood but left out of the "topic" keywords a caption should mention.
 DESIGN_WORDS = set("""
@@ -41,7 +44,7 @@ def tokenize(text: str) -> list[str]:
     text = HASHTAG_RE.sub(" ", text)
     text = MENTION_RE.sub(" ", text)
     words = WORD_RE.findall(text.lower())
-    return [w for w in words if len(w) > 2 and w not in STOPWORDS]
+    return [w for w in words if len(w) > 2 and w not in STOPWORDS and w not in NOISE_WORDS]
 
 
 def clean_caption(caption: str) -> dict:

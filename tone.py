@@ -27,6 +27,8 @@ class TeamTone:
         words = [p["n_words"] for p in self.posts] or [25]
         self.avg_words = float(np.mean(words))
         self.std_words = float(np.std(words)) or 8.0
+        # Length to aim for: the team's habit, kept inside the Instagram-friendly range.
+        self.target_words = float(min(max(self.avg_words, config.MIN_WORDS), config.MAX_WORDS))
         self.emoji_rate = float(np.mean([len(p["emojis"]) for p in self.posts])) if self.n else 0.0
         self.hashtag_rate = float(np.mean([len(p["hashtags"]) for p in self.posts])) if self.n else 0.0
         # Count case-insensitively but show the spelling the team uses (#Techkriti).
@@ -38,7 +40,10 @@ class TeamTone:
             h for p in self.posts for h in dict.fromkeys(p["hashtags"])).most_common(6)]
         self.top_emojis = [e for e, _ in Counter(
             e for p in self.posts for e in p["emojis"]).most_common(5)]
-        self.top_words = [w for w, _ in Counter(w for d in docs for w in d).most_common(15)]
+        # Words in almost every caption (e.g. the team's own name) say nothing about voice.
+        common = {w for w, c in df.items() if self.n >= 5 and c / self.n > 0.6}
+        self.top_words = [w for w, _ in Counter(w for d in docs for w in d
+                                                if w not in common).most_common(15)]
         # How similar the team's own captions are to each other: the yardstick
         # that turns raw cosine similarity into a 0-100 "sounds like us" score.
         self.ref_sim = self._reference_similarity()
@@ -78,7 +83,10 @@ class TeamTone:
     # --- style statistics -------------------------------------------------
     def style_match(self, c: dict) -> float:
         """0-1: length, emoji and hashtag habits compared with the team's."""
-        length = math.exp(-((c["n_words"] - self.avg_words) / (2 * self.std_words)) ** 2)
+        # The team's own spread only applies if we aim for their own length.
+        spread = (max(self.std_words, 0.25 * self.target_words) if self.target_words == self.avg_words
+                  else 0.3 * self.target_words)
+        length = math.exp(-((c["n_words"] - self.target_words) / (2 * spread)) ** 2)
         # Targets are the team's habit, but never below the configured minimum,
         # so captions are not penalised for carrying the required hashtags/emojis.
         emoji = math.exp(-abs(len(c["emojis"]) - max(self.emoji_rate, config.MIN_EMOJIS)) / 2)

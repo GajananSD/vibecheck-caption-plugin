@@ -135,3 +135,21 @@ def test_captions_always_have_hashtags_and_emojis():
     assert len(c["hashtags"]) >= config.MIN_HASHTAGS and len(c["emojis"]) >= config.MIN_EMOJIS
     # Required tags/emojis don't hurt the tone score for a team that never uses them.
     assert tone.tone_match(fixed) > tone.tone_match("Robots are back this week.") - 5
+
+
+# ---------- length floor / noise words ----------
+def test_short_voice_team_still_gets_full_length_captions():
+    import config
+    import generator
+    plain = [etl.clean_post({"id": i, "caption": f"Robo Wars brief-0{i} version by Demo Studio",
+                             "likes": 100 + i, "label": "team"}) for i in range(10)]
+    tone = TeamTone(plain)
+    assert tone.target_words == config.MIN_WORDS            # avg ~7 words -> lifted to the floor
+    assert not {"version", "brief"} & set(tone.top_words)   # draft words are not "voice"
+    assert not {"demo", "studio"} & set(tone.top_words)     # in every caption -> not informative
+    inp = etl.build_input({**SAMPLE, "team": {"id": 5, "name": "Demo Studio (synthetic)"}}, plain)
+    caps = generator.template_captions(inp, tone, 4)
+    assert all(etl.clean_caption(c)["n_words"] >= 10 for c in caps), caps
+    # A full caption now beats a 4-word fragment on style (length, emojis, hashtags).
+    fragment = etl.clean_caption("cad portfolio demo studio ⚡ #DemoStudio #Build")
+    assert tone.style_match(etl.clean_caption(caps[0])) > tone.style_match(fragment) + 0.2

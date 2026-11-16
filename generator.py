@@ -89,6 +89,8 @@ def build_prompt(inp: dict, tone, n: int) -> str:
     emoji_habit = (f"{habit}; every caption must still have at least {config.MIN_EMOJIS} emoji, "
                    f"e.g. " + " ".join(emojis_for(inp, tone)[:3]))
     tags = ", ".join("#" + h for h in hashtags_for(inp, tone))
+    lo = round(tone.target_words * 0.8)
+    hi = min(config.MAX_WORDS, round(tone.target_words * 1.4))
     return f"""You write Instagram captions for the design team "{inp['team_name']}" (@{inp['handle']}).
 
 The designer is planning this poster: "{inp['description'] or 'no description given'}"
@@ -96,7 +98,7 @@ Subject keywords: {', '.join(inp['topic']) or 'none'}
 Visual mood of the poster: {', '.join(inp['mood'])}
 
 The team's caption voice:
-- about {round(tone.avg_words)} words per caption
+- {lo}-{hi} words per caption, not counting hashtags (their own posts average {round(tone.avg_words)})
 - {emoji_habit}
 - hashtags to use: {tags}
 - words they use a lot: {', '.join(tone.top_words[:10]) or 'n/a'}
@@ -106,7 +108,12 @@ they are about other events, so do not reuse their topics or phrases):
 {examples}
 
 Write {n} different captions for this poster in the same voice. Vary the opening line and the length.
-Write about the poster's subject, not its colours or layout. End every caption with at least
+Each caption is complete, natural English in proper sentences:
+  1. a short hook as the first sentence (it must work on its own, Instagram cuts the rest off),
+  2. one or two sentences on what the event or post is about,
+  3. a call to action (e.g. register, link in bio, tag a friend, save the date).
+Write about the poster's subject, not its colours or layout. Never use file or draft words
+such as "brief-01", "version", "draft" or "demo kit". End every caption with at least
 {config.MIN_HASHTAGS} of the hashtags above, spelled exactly as above, and no other hashtags.
 Do not invent dates, prices or names; use a placeholder like [date] if one is needed.
 Return a JSON array of {n} strings and nothing else."""
@@ -187,16 +194,19 @@ BODIES = [
 ]
 CTAS = ["Details in bio.", "Register now, link in bio.", "Tag a friend who should come.",
         "Save the date: [date]."]
+EXTRAS = ["We can't wait to see you there.", "Bring your friends and your best ideas.",
+          "Seats are limited, so don't wait."]
 
 
 def template_captions(inp: dict, tone, n: int) -> list[str]:
     rng = random.Random(inp.get("check_id") or 0)
-    topic_words = inp["topic"][:3] or ["something new"]
+    topic_words = inp["topic"][:3] or ["our next event"]
     topic = " ".join(topic_words)
     hooks = [h for m in inp["mood"] for h in HOOKS.get(m, [])] + DEFAULT_HOOKS
     tags = " ".join("#" + h for h in hashtags_for(inp, tone))
     emoji = " ".join(emojis_for(inp, tone)[:max(config.MIN_EMOJIS, round(tone.emoji_rate))])
-    long_voice = tone.avg_words > 25
+    with_cta = tone.target_words >= 12          # always true with the default MIN_WORDS
+    long_voice = tone.target_words >= 15
 
     out, used = [], set()
     for i in range(n * 3):
@@ -206,7 +216,9 @@ def template_captions(inp: dict, tone, n: int) -> list[str]:
         body = BODIES[i % len(BODIES)].format(topic=topic, Topic=topic.capitalize())
         parts = [hook, body]
         if long_voice:
-            parts.append(rng.choice(CTAS))
+            parts.append(rng.choice(EXTRAS))
+        if with_cta:
+            parts.append(CTAS[i % len(CTAS)])
         text = " ".join(parts)
         if emoji:
             text += " " + emoji

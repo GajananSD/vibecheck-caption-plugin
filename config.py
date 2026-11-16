@@ -25,3 +25,7 @@ N_CAPTIONS = 4
 # past captions use fewer (more are used when the team's habit is higher).
 MIN_HASHTAGS = int(os.getenv("MIN_HASHTAGS", "2"))
 MIN_EMOJIS = int(os.getenv("MIN_EMOJIS", "1"))
+# Caption length floor/ceiling in words (hashtags not counted). A team whose past
+# captions are shorter than MIN_WORDS still gets full Instagram-style captions.
+MIN_WORDS = int(os.getenv("MIN_WORDS", "15"))
+MAX_WORDS = int(os.getenv("MAX_WORDS", "40"))
