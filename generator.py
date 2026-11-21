@@ -128,7 +128,8 @@ def _call_gemini(prompt: str) -> list[str]:
             temperature=0.9,
             response_mime_type="application/json",
             response_schema={"type": "ARRAY", "items": {"type": "STRING"}},
-            thinking_config=types.ThinkingConfig(thinking_budget=0),
+            # thinking_config=types.ThinkingConfig(thinking_budget=0),
+            thinking_config=types.ThinkingConfig(thinking_level="low"),
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         ),
     )
